@@ -6,8 +6,8 @@
     <title>ESP32 Sci-Fi Control Center</title>
 
     <!-- Web App Manifest for PWA -->
-    <link rel="manifest" id="manifestPlaceholder">
-    <meta name="theme-color" content="#090d16">
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#0f172a">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="ESP32 Control">
@@ -536,40 +536,23 @@ void loop() {
             setupPWAAndServiceWorker();
         });
 
-        // Inline Manifest and Service Worker via Blob URLs
+        // Register Service Worker & Check PWA Mode
         function setupPWAAndServiceWorker() {
-            // Dynamic Web Manifest
-            const manifestObj = {
-                name: "ESP32 Nexus Dashboard",
-                short_name: "ESP32 Core",
-                start_url: ".",
-                display: "standalone",
-                background_color: "#070a12",
-                theme_color: "#070a12",
-                icons: [{
-                    src: "https://cdn-icons-png.flaticon.com/512/2103/2103633.png",
-                    sizes: "512x512",
-                    type: "image/png"
-                }]
-            };
-            const manifestBlob = new Blob([JSON.stringify(manifestObj)], { type: 'application/json' });
-            document.getElementById('manifestPlaceholder').setAttribute('href', URL.createObjectURL(manifestBlob));
-
             // Register Service Worker for Offline Cache
             if ('serviceWorker' in navigator) {
-                const swCode = `
-                    self.addEventListener('install', e => self.skipWaiting());
-                    self.addEventListener('activate', e => self.clients.claim());
-                    self.addEventListener('fetch', e => e.respondWith(fetch(e.request).catch(() => new Response('Offline'))));
-                `;
-                const swBlob = new Blob([swCode], { type: 'text/javascript' });
-                navigator.serviceWorker.register(URL.createObjectURL(swBlob))
-                    .then(() => logSystem("[PWA] Service Worker đăng ký thành công (Offline Ready)"))
-                    .catch(err => console.log(err));
+                navigator.serviceWorker.register('./sw.js')
+                    .then(reg => {
+                        console.log('[PWA] Service Worker registered with scope:', reg.scope);
+                        logSystem("[PWA] Service Worker đăng ký thành công (Offline Ready)");
+                    })
+                    .catch(err => {
+                        console.error('[PWA] Service Worker registration failed:', err);
+                    });
             }
 
             if (window.matchMedia('(display-mode: standalone)').matches) {
-                document.getElementById('pwaBadge').classList.remove('hidden');
+                const badge = document.getElementById('pwaBadge');
+                if (badge) badge.classList.remove('hidden');
             }
         }
 
