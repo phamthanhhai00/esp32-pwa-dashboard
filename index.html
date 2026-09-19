@@ -186,7 +186,7 @@
                     <span class="p-1.5 rounded-lg bg-red-500/10 text-red-400 text-xs"><i class="fa-solid fa-temperature-high"></i></span>
                 </div>
                 <div class="flex items-baseline gap-2 my-1">
-                    <span id="valTemp" class="text-3xl font-black font-mono text-slate-100">--</span>
+                    <span id="valTemp" class="text-3xl font-black font-mono text-slate-100">0</span>
                     <span class="text-xs font-mono text-slate-400">°C</span>
                 </div>
                 <div class="w-full bg-slate-900 h-2 rounded-full overflow-hidden mt-3 p-0.5 border border-slate-800">
@@ -201,7 +201,7 @@
                     <span class="p-1.5 rounded-lg bg-cyberCyan/10 text-cyberCyan text-xs"><i class="fa-solid fa-droplet"></i></span>
                 </div>
                 <div class="flex items-baseline gap-2 my-1">
-                    <span id="valHum" class="text-3xl font-black font-mono text-slate-100">--</span>
+                    <span id="valHum" class="text-3xl font-black font-mono text-slate-100">0</span>
                     <span class="text-xs font-mono text-slate-400">% RH</span>
                 </div>
                 <div class="w-full bg-slate-900 h-2 rounded-full overflow-hidden mt-3 p-0.5 border border-slate-800">
@@ -216,7 +216,7 @@
                     <span class="p-1.5 rounded-lg bg-cyberNeon/10 text-cyberNeon text-xs"><i class="fa-solid fa-bolt"></i></span>
                 </div>
                 <div class="flex items-baseline gap-2 my-1">
-                    <span id="valVolt" class="text-3xl font-black font-mono text-slate-100">--</span>
+                    <span id="valVolt" class="text-3xl font-black font-mono text-slate-100">0.00</span>
                     <span class="text-xs font-mono text-slate-400">Volts</span>
                 </div>
                 <div class="w-full bg-slate-900 h-2 rounded-full overflow-hidden mt-3 p-0.5 border border-slate-800">
@@ -231,7 +231,7 @@
                     <span class="p-1.5 rounded-lg bg-cyberPurple/10 text-cyberPurple text-xs"><i class="fa-solid fa-signal"></i></span>
                 </div>
                 <div class="flex items-baseline gap-2 my-1">
-                    <span id="valRssi" class="text-3xl font-black font-mono text-slate-100">--</span>
+                    <span id="valRssi" class="text-3xl font-black font-mono text-slate-100">0</span>
                     <span class="text-xs font-mono text-slate-400">dBm</span>
                 </div>
                 <div class="w-full bg-slate-900 h-2 rounded-full overflow-hidden mt-3 p-0.5 border border-slate-800">
@@ -975,6 +975,28 @@ void loop() {
         }
 
         /* UTILITY FUNCTIONS */
+        function resetDashboardMetrics() {
+            const valTemp = document.getElementById('valTemp');
+            const barTemp = document.getElementById('barTemp');
+            if (valTemp) valTemp.innerText = "0";
+            if (barTemp) barTemp.style.width = "0%";
+
+            const valHum = document.getElementById('valHum');
+            const barHum = document.getElementById('barHum');
+            if (valHum) valHum.innerText = "0";
+            if (barHum) barHum.style.width = "0%";
+
+            const valVolt = document.getElementById('valVolt');
+            const barVolt = document.getElementById('barVolt');
+            if (valVolt) valVolt.innerText = "0.00";
+            if (barVolt) barVolt.style.width = "0%";
+
+            const valRssi = document.getElementById('valRssi');
+            const barRssi = document.getElementById('barRssi');
+            if (valRssi) valRssi.innerText = "0";
+            if (barRssi) barRssi.style.width = "0%";
+        }
+
         function setConnectionState(isConnected, text) {
             state.connected = isConnected;
             const statusLed = document.getElementById('statusLed');
@@ -988,6 +1010,8 @@ void loop() {
                 statusLed.className = "w-2.5 h-2.5 rounded-full bg-red-500";
                 statusText.innerText = text || "OFFLINE";
                 statusText.className = "font-mono text-red-500 font-bold";
+                // Đưa cả 4 thông số cảm biến và thanh tiến trình về 0 để thể hiện mất kết nối
+                resetDashboardMetrics();
             }
         }
 
