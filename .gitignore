@@ -5,3 +5,4 @@ esp32_firmware/build/**/*.cache
 esp32_firmware/build/**/*.elf
 esp32_firmware/build/**/*.map
 esp32_firmware/build/**/compile_commands.json
+

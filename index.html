@@ -698,6 +698,21 @@ void loop() {
                 return;
             }
 
+            // Nếu đã có thiết bị đã nhớ từ trước -> Kết nối thẳng tức thì, KHÔNG CẦN mở bảng chọn!
+            if (navigator.bluetooth.getDevices) {
+                try {
+                    const devices = await navigator.bluetooth.getDevices();
+                    const target = devices.find(d => (d.name && (d.name.includes('ESP32') || d.name.includes('NEXUS')))) || devices[0];
+                    if (target) {
+                        logSystem(`[BLE] Đang kết nối lại thiết bị đã nhớ: "${target.name || 'ESP32'}"...`);
+                        await doGattConnect(target);
+                        return;
+                    }
+                } catch (e) {
+                    console.warn('[BLE] Thử kết nối thiết bị đã nhớ thất bại, mở bảng quét...', e);
+                }
+            }
+
             try {
                 logSystem("Bắt đầu quét tìm thiết bị BLE...");
                 const device = await navigator.bluetooth.requestDevice({
@@ -717,7 +732,7 @@ void loop() {
             }
         }
 
-        /* TỰ ĐỘNG NHỚ & KẾT NỐI LẠI (KHÔNG CẦN BẤM NÚT) */
+        /* TỰ ĐỘNG NHỚ & KẾT NỐI LẠI (KHI F5 / RELOAD HOẶC MỞ LẠI APP) */
         async function tryAutoConnectRememberedBLE() {
             if (!navigator.bluetooth || !navigator.bluetooth.getDevices) {
                 return false;
@@ -728,9 +743,31 @@ void loop() {
                 if (devices && devices.length > 0) {
                     const target = devices.find(d => (d.name && (d.name.includes('ESP32') || d.name.includes('NEXUS')))) || devices[0];
                     if (target) {
-                        logSystem(`[BLE AUTO] Phát hiện thiết bị đã ghép đôi: "${target.name || 'ESP32'}". Đang tự động kết nối ngầm...`);
-                        await doGattConnect(target);
-                        return true;
+                        logSystem(`[BLE AUTO] Đã nhớ "${target.name || 'ESP32'}". Đang tự động kết nối ngầm...`);
+                        
+                        // Đổi chữ trên nút để báo cho người dùng biết thiết bị đã được nhớ
+                        const btn = document.getElementById('btnBleConnect');
+                        if (btn) {
+                            btn.innerHTML = `<i class="fa-solid fa-bolt text-yellow-400"></i> Kết nối lại ${target.name || 'ESP32'}`;
+                        }
+
+                        // Hỗ trợ watchAdvertisements nếu trình duyệt cho phép
+                        if (target.watchAdvertisements) {
+                            try {
+                                await target.watchAdvertisements();
+                                target.addEventListener('advertisementreceived', async () => {
+                                    if (!state.connected) await doGattConnect(target);
+                                }, { once: true });
+                            } catch(e) {}
+                        }
+
+                        try {
+                            await doGattConnect(target);
+                            return true;
+                        } catch (err) {
+                            // Nếu trình duyệt yêu cầu 1 cử chỉ click bảo mật
+                            logSystem(`[BLE AUTO] Đã sẵn sàng kết nối ${target.name || 'ESP32'}. Bấm nút "Kết nối lại" để bắt đầu.`);
+                        }
                     }
                 }
             } catch (e) {
