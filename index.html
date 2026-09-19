@@ -167,7 +167,7 @@
                     </button>
 
                     <div class="relative flex-1 sm:w-48">
-                        <input type="text" id="wifiIpInput" value="esp32-nexus.local" placeholder="esp32-nexus.local" class="w-full bg-slate-950 text-xs font-mono px-3 py-2.5 rounded-xl border border-slate-700 text-cyberNeon focus:outline-none focus:border-cyberNeon">
+                        <input type="text" id="wifiIpInput" value="192.168.4.1" placeholder="192.168.4.1 hoặc esp32-nexus.local" class="w-full bg-slate-950 text-xs font-mono px-3 py-2.5 rounded-xl border border-slate-700 text-cyberNeon focus:outline-none focus:border-cyberNeon">
                     </div>
                     
                     <button id="btnWifiConnect" onclick="toggleWiFiConnection()" class="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold text-xs uppercase tracking-wider transition flex items-center gap-1.5">
@@ -687,22 +687,54 @@ void loop() {
         }
 
         /* WIFI mDNS SCAN & POLLING LOGIC */
-        function scanAndConnectWifiMdns() {
+        async function scanAndConnectWifiMdns() {
             if (state.connected && state.mode === 'wifi') {
                 disconnectWiFi();
                 return;
             }
-            const host = "esp32-nexus.local";
-            document.getElementById('wifiIpInput').value = host;
-            logSystem(`[WiFi SCAN] Đang quét và kết nối tới thiết bị mDNS: http://${host}/api/data...`);
-            connectWiFiWithHost(host);
+            const inputVal = document.getElementById('wifiIpInput').value.trim();
+            const candidates = [
+                inputVal,
+                "192.168.4.1",
+                "esp32-nexus.local",
+                "192.168.0.160"
+            ].filter((h, idx, arr) => h && arr.indexOf(h) === idx);
+
+            const btnScan = document.getElementById('btnWifiScan');
+            if (btnScan) btnScan.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Đang quét...`;
+            logSystem(`[WiFi SCAN] Đang quét các địa chỉ: ${candidates.join(', ')}...`);
+
+            let foundHost = null;
+            for (const h of candidates) {
+                try {
+                    const controller = new AbortController();
+                    const tid = setTimeout(() => controller.abort(), 1000);
+                    const res = await fetch(`http://${h}/api/data`, { signal: controller.signal, mode: 'cors' });
+                    clearTimeout(tid);
+                    if (res.ok) {
+                        foundHost = h;
+                        break;
+                    }
+                } catch (e) {
+                    // Try next candidate
+                }
+            }
+
+            const target = foundHost || inputVal || "192.168.4.1";
+            document.getElementById('wifiIpInput').value = target;
+            if (foundHost) {
+                logSystem(`[WiFi SCAN] Tìm thấy thiết bị tại: http://${foundHost}! Bắt đầu kết nối...`);
+            } else {
+                logSystem(`[WiFi SCAN] Chưa dò thấy tự động. Đang kết nối thử tới: http://${target}...`);
+            }
+            connectWiFiWithHost(target);
         }
 
         function toggleWiFiConnection() {
             if (state.connected && state.mode === 'wifi') {
                 disconnectWiFi();
             } else {
-                const host = document.getElementById('wifiIpInput').value.trim() || 'esp32-nexus.local';
+                const host = document.getElementById('wifiIpInput').value.trim() || '192.168.4.1';
                 connectWiFiWithHost(host);
             }
         }
