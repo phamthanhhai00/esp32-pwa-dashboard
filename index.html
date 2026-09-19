@@ -1,0 +1,951 @@
+<!DOCTYPE html>
+<html lang="vi" class="dark h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ESP32 Sci-Fi Control Center</title>
+
+    <!-- Web App Manifest for PWA -->
+    <link rel="manifest" id="manifestPlaceholder">
+    <meta name="theme-color" content="#090d16">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="ESP32 Control">
+
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        cyberDark: '#070a12',
+                        cyberCard: '#0f172a',
+                        cyberBorder: '#1e293b',
+                        cyberCyan: '#06b6d4',
+                        cyberNeon: '#10b981',
+                        cyberPink: '#ec4899',
+                        cyberPurple: '#a855f7',
+                        cyberAmber: '#f59e0b'
+                    },
+                    fontFamily: {
+                        mono: ['Courier New', 'Consolas', 'monospace'],
+                        sans: ['Inter', 'system-ui', 'sans-serif']
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Custom Glowing & Sci-Fi Effects */
+        body {
+            background-color: #070a12;
+            background-image: 
+                radial-gradient(circle at 15% 15%, rgba(6, 182, 212, 0.08) 0%, transparent 40%),
+                radial-gradient(circle at 85% 85%, rgba(168, 85, 247, 0.08) 0%, transparent 40%);
+        }
+        .neon-border-cyan {
+            border: 1px solid rgba(6, 182, 212, 0.4);
+            box-shadow: 0 0 12px rgba(6, 182, 212, 0.15);
+        }
+        .neon-border-green {
+            border: 1px solid rgba(16, 185, 129, 0.4);
+            box-shadow: 0 0 12px rgba(16, 185, 129, 0.15);
+        }
+        .glow-cyan {
+            box-shadow: 0 0 15px rgba(6, 182, 212, 0.5);
+        }
+        .glow-green {
+            box-shadow: 0 0 15px rgba(16, 185, 129, 0.5);
+        }
+        .glass-card {
+            background: rgba(15, 23, 42, 0.75);
+            backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-track { background: #070a12; }
+        ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #06b6d4; }
+    </style>
+</head>
+<body class="text-slate-100 font-sans min-h-screen flex flex-col justify-between antialiased selection:bg-cyberCyan selection:text-black">
+
+    <!-- TOP HEADER -->
+    <header class="sticky top-0 z-40 glass-card border-b border-slate-800/80 px-4 py-3 shadow-2xl">
+        <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
+            <!-- App Logo & Name -->
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyberCyan to-blue-600 flex items-center justify-center text-slate-950 font-black text-xl shadow-lg glow-cyan">
+                    <i class="fa-solid fa-microchip"></i>
+                </div>
+                <div>
+                    <h1 class="text-base sm:text-lg font-black tracking-wider uppercase bg-gradient-to-r from-cyberCyan via-teal-300 to-cyberNeon bg-clip-text text-transparent flex items-center gap-2">
+                        ESP32 NEXUS CORE
+                        <span id="pwaBadge" class="hidden text-[10px] px-2 py-0.5 rounded-md bg-cyberCyan/10 text-cyberCyan border border-cyberCyan/30 tracking-normal">PWA ACTIVE</span>
+                    </h1>
+                    <p class="text-[11px] text-slate-400 font-mono">SCIFI INDUSTRIAL TELEMETRY DASHBOARD</p>
+                </div>
+            </div>
+
+            <!-- Mode Selector & Connection Controls -->
+            <div class="flex flex-wrap items-center gap-2.5">
+                <!-- Mode Toggle Switches -->
+                <div class="flex bg-slate-950/80 p-1 rounded-xl border border-slate-800 text-xs font-semibold">
+                    <button id="btnModeBLE" onclick="switchMode('ble')" class="px-3 py-1.5 rounded-lg transition-all duration-300 flex items-center gap-1.5 bg-cyberCyan text-slate-950 shadow-md font-bold">
+                        <i class="fa-brands fa-bluetooth"></i> BLE
+                    </button>
+                    <button id="btnModeWiFi" onclick="switchMode('wifi')" class="px-3 py-1.5 rounded-lg transition-all duration-300 flex items-center gap-1.5 text-slate-400 hover:text-slate-200">
+                        <i class="fa-solid fa-wifi"></i> WiFi AP
+                    </button>
+                </div>
+
+                <!-- Status LED Indicator -->
+                <div class="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-950/80 border border-slate-800 text-xs">
+                    <span id="statusLed" class="w-2.5 h-2.5 rounded-full bg-red-500 transition-all duration-300"></span>
+                    <span id="statusText" class="font-mono text-slate-400">OFFLINE</span>
+                </div>
+
+                <!-- Action Buttons: Code Modal & Help -->
+                <button onclick="toggleModal('codeModal')" class="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyberCyan transition border border-slate-700/50" title="Mã nguồn ESP32">
+                    <i class="fa-solid fa-code"></i>
+                </button>
+                <button onclick="toggleModal('installModal')" class="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyberNeon transition border border-slate-700/50" title="Thêm vào Màn hình chính">
+                    <i class="fa-solid fa-mobile-screen-button"></i>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="flex-1 max-w-7xl w-full mx-auto p-4 space-y-5">
+
+        <!-- CONNECTION CONTROL BAR -->
+        <section class="glass-card p-4 rounded-2xl relative overflow-hidden transition-all duration-300">
+            <!-- BLE Config Panel -->
+            <div id="bleConfigPanel" class="flex flex-wrap items-center justify-between gap-4">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-cyberCyan/10 text-cyberCyan flex items-center justify-center text-xl border border-cyberCyan/30">
+                        <i class="fa-brands fa-bluetooth-b"></i>
+                    </div>
+                    <div>
+                        <h3 class="text-sm font-bold text-slate-200 uppercase tracking-wide">Web Bluetooth Low Energy (BLE)</h3>
+                        <p class="text-xs text-slate-400 font-mono">Kết nối trực tiếp không cần mạng Internet/WiFi qua trình duyệt Chrome</p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2 w-full sm:w-auto">
+                    <button id="btnBleConnect" onclick="connectBLE()" class="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-gradient-to-r from-cyberCyan to-blue-600 text-slate-950 font-black text-xs uppercase tracking-wider hover:opacity-90 transition shadow-lg glow-cyan flex items-center justify-center gap-2">
+                        <i class="fa-solid fa-satellite-dish"></i> Quét & Kết nối BLE
+                    </button>
+                    <button id="btnBleDisconnect" onclick="disconnectBLE()" class="hidden px-5 py-2.5 rounded-xl bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30 font-bold text-xs uppercase transition flex items-center gap-2">
+                        <i class="fa-solid fa-power-off"></i> Ngắt Kết Nối
+                    </button>
+                </div>
+            </div>
+
+            <!-- WiFi Config Panel (Hidden by default) -->
+            <div id="wifiConfigPanel" class="hidden flex flex-wrap items-center justify-between gap-4">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-cyberNeon/10 text-cyberNeon flex items-center justify-center text-xl border border-cyberNeon/30">
+                        <i class="fa-solid fa-wifi"></i>
+                    </div>
+                    <div>
+                        <h3 class="text-sm font-bold text-slate-200 uppercase tracking-wide">WiFi Access Point / Local IP Server</h3>
+                        <p class="text-xs text-slate-400 font-mono">Gửi HTTP Polling tới ESP32 phát WiFi (Địa chỉ mặc định 192.168.4.1)</p>
+                    </div>
+                </div>
+                <div class="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                    <div class="relative flex-1 sm:w-48">
+                        <input type="text" id="wifiIpInput" value="192.168.4.1" placeholder="192.168.4.1" class="w-full bg-slate-950 text-xs font-mono px-3 py-2.5 rounded-xl border border-slate-700 text-cyberNeon focus:outline-none focus:border-cyberNeon">
+                    </div>
+                    <button id="btnWifiConnect" onclick="toggleWiFiConnection()" class="px-5 py-2.5 rounded-xl bg-cyberNeon hover:bg-emerald-400 text-slate-950 font-black text-xs uppercase tracking-wider transition shadow-lg glow-green flex items-center gap-2">
+                        <i class="fa-solid fa-link"></i> Kết nối IP
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- SENSOR METRICS GAUGES & CARDS -->
+        <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <!-- Temperature Card -->
+            <div class="glass-panel p-4 rounded-2xl relative overflow-hidden group border border-slate-800">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="text-[11px] font-mono font-bold uppercase tracking-wider text-slate-400">Nhiệt độ (Temperature)</span>
+                    <span class="p-1.5 rounded-lg bg-red-500/10 text-red-400 text-xs"><i class="fa-solid fa-temperature-high"></i></span>
+                </div>
+                <div class="flex items-baseline gap-2 my-1">
+                    <span id="valTemp" class="text-3xl font-black font-mono text-slate-100">--</span>
+                    <span class="text-xs font-mono text-slate-400">°C</span>
+                </div>
+                <div class="w-full bg-slate-900 h-2 rounded-full overflow-hidden mt-3 p-0.5 border border-slate-800">
+                    <div id="barTemp" class="bg-gradient-to-r from-orange-500 to-red-500 h-full w-0 rounded-full transition-all duration-500"></div>
+                </div>
+            </div>
+
+            <!-- Humidity Card -->
+            <div class="glass-panel p-4 rounded-2xl relative overflow-hidden group border border-slate-800">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="text-[11px] font-mono font-bold uppercase tracking-wider text-slate-400">Độ ẩm (Humidity)</span>
+                    <span class="p-1.5 rounded-lg bg-cyberCyan/10 text-cyberCyan text-xs"><i class="fa-solid fa-droplet"></i></span>
+                </div>
+                <div class="flex items-baseline gap-2 my-1">
+                    <span id="valHum" class="text-3xl font-black font-mono text-slate-100">--</span>
+                    <span class="text-xs font-mono text-slate-400">% RH</span>
+                </div>
+                <div class="w-full bg-slate-900 h-2 rounded-full overflow-hidden mt-3 p-0.5 border border-slate-800">
+                    <div id="barHum" class="bg-gradient-to-r from-blue-500 to-cyberCyan h-full w-0 rounded-full transition-all duration-500"></div>
+                </div>
+            </div>
+
+            <!-- Voltage Card -->
+            <div class="glass-panel p-4 rounded-2xl relative overflow-hidden group border border-slate-800">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="text-[11px] font-mono font-bold uppercase tracking-wider text-slate-400">Điện áp PIN (Voltage)</span>
+                    <span class="p-1.5 rounded-lg bg-cyberNeon/10 text-cyberNeon text-xs"><i class="fa-solid fa-bolt"></i></span>
+                </div>
+                <div class="flex items-baseline gap-2 my-1">
+                    <span id="valVolt" class="text-3xl font-black font-mono text-slate-100">--</span>
+                    <span class="text-xs font-mono text-slate-400">Volts</span>
+                </div>
+                <div class="w-full bg-slate-900 h-2 rounded-full overflow-hidden mt-3 p-0.5 border border-slate-800">
+                    <div id="barVolt" class="bg-gradient-to-r from-emerald-600 to-cyberNeon h-full w-0 rounded-full transition-all duration-500"></div>
+                </div>
+            </div>
+
+            <!-- Signal RSSI Card -->
+            <div class="glass-panel p-4 rounded-2xl relative overflow-hidden group border border-slate-800">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="text-[11px] font-mono font-bold uppercase tracking-wider text-slate-400">Tín hiệu (Signal RSSI)</span>
+                    <span class="p-1.5 rounded-lg bg-cyberPurple/10 text-cyberPurple text-xs"><i class="fa-solid fa-signal"></i></span>
+                </div>
+                <div class="flex items-baseline gap-2 my-1">
+                    <span id="valRssi" class="text-3xl font-black font-mono text-slate-100">--</span>
+                    <span class="text-xs font-mono text-slate-400">dBm</span>
+                </div>
+                <div class="w-full bg-slate-900 h-2 rounded-full overflow-hidden mt-3 p-0.5 border border-slate-800">
+                    <div id="barRssi" class="bg-gradient-to-r from-purple-600 to-cyberPurple h-full w-0 rounded-full transition-all duration-500"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- CHART & ACTUATOR CONTROLS SECTION -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+            
+            <!-- Realtime Telemetry Graph -->
+            <div class="lg:col-span-2 glass-card p-5 rounded-2xl flex flex-col justify-between">
+                <div class="flex justify-between items-center mb-3">
+                    <h2 class="text-xs font-mono font-bold uppercase tracking-wider text-cyberCyan flex items-center gap-2">
+                        <i class="fa-solid fa-chart-line"></i> Đồ thị Telemetry Realtime
+                    </h2>
+                    <button onclick="clearChart()" class="text-[11px] font-mono text-slate-400 hover:text-slate-200 transition">
+                        <i class="fa-solid fa-arrows-rotate mr-1"></i> Reset Chart
+                    </button>
+                </div>
+                <div class="relative w-full h-64 sm:h-72">
+                    <canvas id="telemetryChart"></canvas>
+                </div>
+            </div>
+
+            <!-- ACTUATORS / RELAYS CONTROL PANEL -->
+            <div class="glass-card p-5 rounded-2xl flex flex-col justify-between space-y-4">
+                <h2 class="text-xs font-mono font-bold uppercase tracking-wider text-cyberNeon flex items-center gap-2">
+                    <i class="fa-solid fa-sliders"></i> Bảng điều khiển Tải / Output
+                </h2>
+
+                <!-- 4 Relays Grid Switches -->
+                <div class="grid grid-cols-2 gap-3">
+                    <!-- Relay 1 -->
+                    <button id="btnRelay1" onclick="toggleRelay(1)" class="p-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 flex flex-col items-center justify-center gap-2 transition duration-200">
+                        <i id="iconRelay1" class="fa-solid fa-power-off text-xl text-slate-600"></i>
+                        <span class="text-xs font-bold text-slate-300">RƠ-LE 1</span>
+                        <span id="statusRelay1" class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-950 text-slate-500">OFF</span>
+                    </button>
+                    <!-- Relay 2 -->
+                    <button id="btnRelay2" onclick="toggleRelay(2)" class="p-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 flex flex-col items-center justify-center gap-2 transition duration-200">
+                        <i id="iconRelay2" class="fa-solid fa-power-off text-xl text-slate-600"></i>
+                        <span class="text-xs font-bold text-slate-300">RƠ-LE 2</span>
+                        <span id="statusRelay2" class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-950 text-slate-500">OFF</span>
+                    </button>
+                    <!-- Relay 3 -->
+                    <button id="btnRelay3" onclick="toggleRelay(3)" class="p-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 flex flex-col items-center justify-center gap-2 transition duration-200">
+                        <i id="iconRelay3" class="fa-solid fa-power-off text-xl text-slate-600"></i>
+                        <span class="text-xs font-bold text-slate-300">RƠ-LE 3</span>
+                        <span id="statusRelay3" class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-950 text-slate-500">OFF</span>
+                    </button>
+                    <!-- Relay 4 -->
+                    <button id="btnRelay4" onclick="toggleRelay(4)" class="p-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 flex flex-col items-center justify-center gap-2 transition duration-200">
+                        <i id="iconRelay4" class="fa-solid fa-power-off text-xl text-slate-600"></i>
+                        <span class="text-xs font-bold text-slate-300">RƠ-LE 4</span>
+                        <span id="statusRelay4" class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-950 text-slate-500">OFF</span>
+                    </button>
+                </div>
+
+                <!-- PWM Dimmer Slider -->
+                <div class="space-y-1.5 pt-2 border-t border-slate-800/80">
+                    <div class="flex justify-between items-center text-xs font-mono">
+                        <span class="text-slate-400"><i class="fa-solid fa-fan text-cyberCyan mr-1"></i> PWM Motor Speed:</span>
+                        <span id="pwmValueText" class="font-bold text-cyberCyan">0%</span>
+                    </div>
+                    <input type="range" id="pwmSlider" min="0" max="100" value="0" onchange="sendPWM(this.value)" oninput="document.getElementById('pwmValueText').innerText = this.value + '%'" class="w-full accent-cyberCyan bg-slate-900 rounded-lg cursor-pointer h-2 border border-slate-800">
+                </div>
+
+                <!-- Pulse Momentary Button -->
+                <div class="pt-2 border-t border-slate-800/80 flex items-center gap-3">
+                    <button onmousedown="sendPulse(1)" onmouseup="sendPulse(0)" ontouchstart="sendPulse(1)" ontouchend="sendPulse(0)" class="w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 hover:opacity-90 active:scale-95 text-slate-950 font-black text-xs uppercase tracking-wider transition shadow-md flex items-center justify-center gap-2 select-none">
+                        <i class="fa-solid fa-hand-pointer"></i> Nút Nhấn Xung (Pulse)
+                    </button>
+                </div>
+
+                <!-- RGB Light Control -->
+                <div class="pt-2 border-t border-slate-800/80 flex items-center justify-between">
+                    <span class="text-xs font-mono text-slate-400"><i class="fa-solid fa-palette text-cyberPink mr-1"></i> Đèn Đổi Màu RGB:</span>
+                    <div class="flex items-center gap-2">
+                        <span id="rgbHex" class="text-xs font-mono text-slate-400">#06B6D4</span>
+                        <input type="color" id="rgbPicker" value="#06b6d4" onchange="sendRGB(this.value)" class="w-8 h-8 rounded-lg cursor-pointer bg-transparent border-0">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TERMINAL LOG CONSOLE -->
+        <section class="glass-card p-4 rounded-2xl border border-slate-800">
+            <div class="flex items-center justify-between mb-2">
+                <h3 class="text-xs font-mono font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                    <i class="fa-solid fa-terminal text-cyberCyan"></i> Serial Terminal / Realtime Log
+                </h3>
+                <div class="flex items-center gap-2">
+                    <button onclick="clearLog()" class="px-2.5 py-1 text-[11px] font-mono bg-slate-900 hover:bg-slate-800 text-slate-400 rounded-lg transition border border-slate-800">Clear</button>
+                    <button onclick="exportLog()" class="px-2.5 py-1 text-[11px] font-mono bg-slate-900 hover:bg-slate-800 text-cyberCyan rounded-lg transition border border-slate-800"><i class="fa-solid fa-download mr-1"></i> Export .txt</button>
+                </div>
+            </div>
+            <div id="terminalLog" class="bg-slate-950 p-3 rounded-xl font-mono text-xs text-cyberNeon h-32 overflow-y-auto space-y-1 border border-slate-900">
+                <div class="text-slate-600">[SYSTEM] Khởi chạy ESP32 Nexus Dashboard. Sẵn sàng kết nối Bluetooth/WiFi...</div>
+            </div>
+        </section>
+    </main>
+
+    <!-- FOOTER -->
+    <footer class="text-center py-3 text-[11px] font-mono text-slate-600 border-t border-slate-900">
+        ESP32 Web App Dashboard • Single File Portable Edition
+    </footer>
+
+    <!-- MODAL 1: CODE GENERATOR FOR ESP32 -->
+    <div id="codeModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 hidden flex items-center justify-center p-4">
+        <div class="glass-card w-full max-w-3xl rounded-2xl overflow-hidden flex flex-col max-h-[90vh] border border-slate-800 shadow-2xl">
+            <div class="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
+                <h3 class="font-bold text-sm uppercase tracking-wider text-cyberCyan flex items-center gap-2">
+                    <i class="fa-solid fa-code"></i> Mã Nguồn C++ Chuẩn Cho Arduino IDE
+                </h3>
+                <button onclick="toggleModal('codeModal')" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
+            </div>
+            <!-- Code Tab selector -->
+            <div class="flex border-b border-slate-800 bg-slate-950 text-xs font-mono">
+                <button id="tabBleCodeBtn" onclick="switchCodeTab('ble')" class="px-5 py-3 font-bold text-cyberCyan border-b-2 border-cyberCyan">1. Code BLE (Bluetooth)</button>
+                <button id="tabWifiCodeBtn" onclick="switchCodeTab('wifi')" class="px-5 py-3 font-bold text-slate-500 border-b-2 border-transparent">2. Code WiFi AP Server</button>
+            </div>
+            <!-- Code View Container -->
+            <div class="p-4 overflow-y-auto flex-1 font-mono text-xs bg-slate-950 text-slate-300">
+                <!-- BLE Code -->
+                <pre id="codeSnippetBle" class="whitespace-pre-wrap selection:bg-slate-800">
+/*
+ * CODE ESP32 BLUETOOTH BLE (Sử dụng với Arduino IDE)
+ */
+#include &lt;BLEDevice.h&gt;
+#include &lt;BLEServer.h&gt;
+#include &lt;BLEUtils.h&gt;
+#include &lt;BLE2902.h&gt;
+
+#define SERVICE_UUID        "4fa0c101-0001-4000-8000-000000000000"
+#define CHARACTERISTIC_UUID "4fa0c101-0002-4000-8000-000000000000"
+
+BLECharacteristic *pCharacteristic;
+bool deviceConnected = false;
+
+class MyServerCallbacks: public BLEServerCallbacks {
+    void onConnect(BLEServer* pServer) { deviceConnected = true; }
+    void onDisconnect(BLEServer* pServer) { deviceConnected = false; BLEDevice::startAdvertising(); }
+};
+
+class MyCallbacks: public BLECharacteristicCallbacks {
+    void onWrite(BLECharacteristic *pCharacteristic) {
+      String rxValue = pCharacteristic-&gt;getValue();
+      if (rxValue.length() &gt; 0) {
+        Serial.print("Lệnh từ Web Dashboard: ");
+        Serial.println(rxValue);
+      }
+    }
+};
+
+void setup() {
+  Serial.begin(115200);
+  BLEDevice::init("ESP32_NEXUS");
+  BLEServer *pServer = BLEDevice::createServer();
+  pServer-&gt;setCallbacks(new MyServerCallbacks());
+  
+  BLEService *pService = pServer-&gt;createService(SERVICE_UUID);
+  pCharacteristic = pService-&gt;createCharacteristic(
+                      CHARACTERISTIC_UUID,
+                      BLECharacteristic::PROPERTY_READ   |
+                      BLECharacteristic::PROPERTY_WRITE  |
+                      BLECharacteristic::PROPERTY_NOTIFY
+                    );
+  pCharacteristic-&gt;addDescriptor(new BLE2902());
+  pCharacteristic-&gt;setCallbacks(new MyCallbacks());
+  pService-&gt;start();
+  
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising-&gt;addServiceUUID(SERVICE_UUID);
+  pAdvertising-&gt;start();
+  Serial.println("ESP32 BLE Sẵn sàng kết nối!");
+}
+
+void loop() {
+  if (deviceConnected) {
+    // Gửi dữ liệu Telemetry cảm biến JSON định kỳ 2 giây
+    float t = 28.5 + random(-10, 10)/10.0;
+    float h = 65.0 + random(-20, 20)/10.0;
+    String jsonStr = "{\"temp\":" + String(t) + ",\"hum\":" + String(h) + ",\"volt\":3.8,\"rssi\":-55}";
+    pCharacteristic-&gt;setValue(jsonStr.c_str());
+    pCharacteristic-&gt;notify();
+    delay(2000);
+  }
+}
+                </pre>
+
+                <!-- WiFi AP Code -->
+                <pre id="codeSnippetWifi" class="hidden whitespace-pre-wrap selection:bg-slate-800">
+/*
+ * CODE ESP32 WIFI AP LOCAL SERVER (Sử dụng với Arduino IDE)
+ */
+#include &lt;WiFi.h&gt;
+#include &lt;WebServer.h&gt;
+
+WebServer server(80);
+
+void handleData() {
+  float t = 29.1 + random(-10, 10)/10.0;
+  float h = 70.0 + random(-20, 20)/10.0;
+  String jsonStr = "{\"temp\":" + String(t) + ",\"hum\":" + String(h) + ",\"volt\":4.1,\"rssi\":-42}";
+  
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.send(200, "application/json", jsonStr);
+}
+
+void handleControl() {
+  if (server.hasArg("cmd")) {
+    String cmd = server.arg("cmd");
+    Serial.println("Lệnh Web HTTP: " + cmd);
+  }
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.send(200, "text/plain", "OK");
+}
+
+void setup() {
+  Serial.begin(115200);
+  
+  // Phát mạng WiFi AP riêng biệt
+  WiFi.softAP("ESP32_NEXUS_AP", "12345678");
+  Serial.print("Web Server IP: ");
+  Serial.println(WiFi.softAPIP()); // Mặc định: 192.168.4.1
+
+  server.on("/api/data", HTTP_GET, handleData);
+  server.on("/api/control", HTTP_GET, handleControl);
+  server.enableCORS(true);
+  server.begin();
+}
+
+void loop() {
+  server.handleClient();
+}
+                </pre>
+            </div>
+            <div class="p-3 border-t border-slate-800 bg-slate-900 flex justify-end">
+                <button onclick="copyCode()" class="px-4 py-2 bg-cyberCyan text-slate-950 font-bold rounded-xl text-xs hover:opacity-90 transition flex items-center gap-2">
+                    <i class="fa-regular fa-copy"></i> Copy Mã Nguồn C++
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL 2: INSTALL TO HOME SCREEN GUIDE -->
+    <div id="installModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 hidden flex items-center justify-center p-4">
+        <div class="glass-card w-full max-w-lg rounded-2xl overflow-hidden flex flex-col border border-slate-800 shadow-2xl">
+            <div class="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
+                <h3 class="font-bold text-sm uppercase tracking-wider text-cyberNeon flex items-center gap-2">
+                    <i class="fa-solid fa-mobile-screen-button"></i> Thêm App Vào Màn Hình Chính
+                </h3>
+                <button onclick="toggleModal('installModal')" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
+            </div>
+            <div class="p-5 space-y-4 text-xs text-slate-300">
+                <div class="space-y-1.5 p-3 rounded-xl bg-slate-900/80 border border-slate-800">
+                    <h4 class="font-bold text-cyberCyan flex items-center gap-2">
+                        <i class="fa-brands fa-android text-sm"></i> Dành cho Android (Chrome)
+                    </h4>
+                    <ol class="list-decimal pl-5 space-y-1 text-slate-400">
+                        <li>Mở file HTML này trong trình duyệt **Google Chrome**.</li>
+                        <li>Bấm dấu **3 chấm (Menu)** ở góc trên bên phải.</li>
+                        <li>Chọn **"Thêm vào màn hình chính" (Add to Home screen)**.</li>
+                        <li>Mở App từ biểu tượng mới tạo ngoài màn hình!</li>
+                    </ol>
+                </div>
+
+                <div class="space-y-1.5 p-3 rounded-xl bg-slate-900/80 border border-slate-800">
+                    <h4 class="font-bold text-cyberPink flex items-center gap-2">
+                        <i class="fa-brands fa-apple text-sm"></i> Dành cho iOS iPhone/iPad (Safari)
+                    </h4>
+                    <ol class="list-decimal pl-5 space-y-1 text-slate-400">
+                        <li>Mở file HTML bằng trình duyệt **Safari**.</li>
+                        <li>Bấm nút **Chia sẻ (Share icon)** ở thanh công cụ dưới.</li>
+                        <li>Cuộn xuống và chọn **"Thêm vào Màn hình chính" (Add to Home Screen)**.</li>
+                    </ol>
+                </div>
+
+                <div class="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl text-amber-200 text-[11px] leading-relaxed">
+                    <i class="fa-solid fa-circle-info mr-1"></i> <strong>Lưu ý Bluetooth trên iOS:</strong> Do giới hạn của Apple, Web Bluetooth chỉ chạy mượt trên Android/Chrome hoặc WebBLE App trên iOS. Nếu dùng iPhone chuẩn, khuyến khích chuyển sang kết nối **WiFi AP**.
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        /* APPLICATION STATE & GLOBALS */
+        const state = {
+            mode: 'ble', // 'ble' or 'wifi'
+            connected: false,
+            bleDevice: null,
+            bleGattServer: null,
+            bleCharacteristic: null,
+            wifiPollTimer: null,
+            relays: [false, false, false, false],
+            pwmValue: 0,
+            chart: null
+        };
+
+        const BLE_SERVICE_UUID = "4fa0c101-0001-4000-8000-000000000000";
+        const BLE_CHAR_UUID    = "4fa0c101-0002-4000-8000-000000000000";
+
+        /* INITIALIZATION & PWA INLINE SERVICE WORKER GENERATION */
+        window.addEventListener('DOMContentLoaded', () => {
+            initChart();
+            setupPWAAndServiceWorker();
+        });
+
+        // Inline Manifest and Service Worker via Blob URLs
+        function setupPWAAndServiceWorker() {
+            // Dynamic Web Manifest
+            const manifestObj = {
+                name: "ESP32 Nexus Dashboard",
+                short_name: "ESP32 Core",
+                start_url: ".",
+                display: "standalone",
+                background_color: "#070a12",
+                theme_color: "#070a12",
+                icons: [{
+                    src: "https://cdn-icons-png.flaticon.com/512/2103/2103633.png",
+                    sizes: "512x512",
+                    type: "image/png"
+                }]
+            };
+            const manifestBlob = new Blob([JSON.stringify(manifestObj)], { type: 'application/json' });
+            document.getElementById('manifestPlaceholder').setAttribute('href', URL.createObjectURL(manifestBlob));
+
+            // Register Service Worker for Offline Cache
+            if ('serviceWorker' in navigator) {
+                const swCode = `
+                    self.addEventListener('install', e => self.skipWaiting());
+                    self.addEventListener('activate', e => self.clients.claim());
+                    self.addEventListener('fetch', e => e.respondWith(fetch(e.request).catch(() => new Response('Offline'))));
+                `;
+                const swBlob = new Blob([swCode], { type: 'text/javascript' });
+                navigator.serviceWorker.register(URL.createObjectURL(swBlob))
+                    .then(() => logSystem("[PWA] Service Worker đăng ký thành công (Offline Ready)"))
+                    .catch(err => console.log(err));
+            }
+
+            if (window.matchMedia('(display-mode: standalone)').matches) {
+                document.getElementById('pwaBadge').classList.remove('hidden');
+            }
+        }
+
+        /* MODE SWITCHING */
+        function switchMode(newMode) {
+            if (state.connected) {
+                if (!confirm("Thay đổi chế độ sẽ ngắt kết nối hiện tại. Bạn muốn tiếp tục?")) return;
+                disconnectAll();
+            }
+
+            state.mode = newMode;
+            const btnBle = document.getElementById('btnModeBLE');
+            const btnWifi = document.getElementById('btnModeWiFi');
+            const blePanel = document.getElementById('bleConfigPanel');
+            const wifiPanel = document.getElementById('wifiConfigPanel');
+
+            if (newMode === 'ble') {
+                btnBle.className = "px-3 py-1.5 rounded-lg transition-all duration-300 flex items-center gap-1.5 bg-cyberCyan text-slate-950 font-bold shadow-md";
+                btnWifi.className = "px-3 py-1.5 rounded-lg transition-all duration-300 flex items-center gap-1.5 text-slate-400 hover:text-slate-200";
+                blePanel.classList.remove('hidden');
+                wifiPanel.classList.add('hidden');
+                logSystem("Đã chuyển sang chế độ Bluetooth (BLE).");
+            } else {
+                btnWifi.className = "px-3 py-1.5 rounded-lg transition-all duration-300 flex items-center gap-1.5 bg-cyberNeon text-slate-950 font-bold shadow-md";
+                btnBle.className = "px-3 py-1.5 rounded-lg transition-all duration-300 flex items-center gap-1.5 text-slate-400 hover:text-slate-200";
+                wifiPanel.classList.remove('hidden');
+                blePanel.classList.add('hidden');
+                logSystem("Đã chuyển sang chế độ WiFi AP / Local IP.");
+            }
+        }
+
+        /* WEB BLUETOOTH API LOGIC */
+        async function connectBLE() {
+            if (!navigator.bluetooth) {
+                alert("Trình duyệt không hỗ trợ Web Bluetooth. Vui lòng dùng Chrome trên Android/Windows/Mac.");
+                return;
+            }
+
+            try {
+                logSystem("Bắt đầu quét tìm thiết bị BLE...");
+                state.bleDevice = await navigator.bluetooth.requestDevice({
+                    acceptAllDevices: true,
+                    optionalServices: [BLE_SERVICE_UUID]
+                });
+
+                logSystem(`Đã chọn: ${state.bleDevice.name || 'ESP32 Device'}. Đang kết nối GATT...`);
+                state.bleDevice.addEventListener('gattserverdisconnected', onGattDisconnected);
+
+                state.bleGattServer = await state.bleDevice.gatt.connect();
+                const service = await state.bleGattServer.getPrimaryService(BLE_SERVICE_UUID);
+                state.bleCharacteristic = await service.getCharacteristic(BLE_CHAR_UUID);
+
+                // Enable Notify Listener
+                await state.bleCharacteristic.startNotifications();
+                state.bleCharacteristic.addEventListener('characteristicvaluechanged', handleBleNotification);
+
+                setConnectionState(true, `BLE: ${state.bleDevice.name || 'ESP32'}`);
+                document.getElementById('btnBleConnect').classList.add('hidden');
+                document.getElementById('btnBleDisconnect').classList.remove('hidden');
+                logSystem("Kết nối BLE thành công!");
+
+            } catch (error) {
+                logSystem(`[LỖI BLE] ${error.message}`);
+                setConnectionState(false);
+            }
+        }
+
+        function handleBleNotification(event) {
+            const decoder = new TextDecoder('utf-8');
+            const rawValue = decoder.decode(event.target.value);
+            logSystem(`[BLE RX] ${rawValue}`);
+            parseTelemetryData(rawValue);
+        }
+
+        function disconnectBLE() {
+            if (state.bleDevice && state.bleDevice.gatt.connected) {
+                state.bleDevice.gatt.disconnect();
+            }
+            onGattDisconnected();
+        }
+
+        function onGattDisconnected() {
+            logSystem("Đã ngắt kết nối Bluetooth.");
+            setConnectionState(false);
+            document.getElementById('btnBleConnect').classList.remove('hidden');
+            document.getElementById('btnBleDisconnect').classList.add('hidden');
+        }
+
+        /* WIFI IP / POLLING LOGIC */
+        function toggleWiFiConnection() {
+            if (state.connected) {
+                disconnectWiFi();
+            } else {
+                connectWiFi();
+            }
+        }
+
+        function connectWiFi() {
+            const ip = document.getElementById('wifiIpInput').value.trim();
+            if (!ip) return alert("Vui lòng nhập IP ESP32!");
+
+            logSystem(`Bắt đầu kết nối WiFi Polling tới http://${ip}...`);
+            setConnectionState(true, `WiFi IP: ${ip}`);
+            document.getElementById('btnWifiConnect').innerText = "Ngắt Kết Nối";
+            document.getElementById('btnWifiConnect').className = "px-5 py-2.5 rounded-xl bg-red-500/80 hover:bg-red-600 text-white font-bold text-xs uppercase tracking-wider transition flex items-center gap-2";
+
+            // Poll sensor data every 2 seconds
+            state.wifiPollTimer = setInterval(() => {
+                fetchSensorDataWiFi(ip);
+            }, 2000);
+
+            fetchSensorDataWiFi(ip);
+        }
+
+        async function fetchSensorDataWiFi(ip) {
+            try {
+                const response = await fetch(`http://${ip}/api/data`, { method: 'GET', mode: 'cors' });
+                if (response.ok) {
+                    const data = await response.json();
+                    logSystem(`[HTTP RX] ${JSON.stringify(data)}`);
+                    updateDashboardMetrics(data);
+                }
+            } catch (err) {
+                logSystem(`[HTTP ERROR] Không thể gọi tới IP ${ip}`);
+            }
+        }
+
+        function disconnectWiFi() {
+            if (state.wifiPollTimer) clearInterval(state.wifiPollTimer);
+            setConnectionState(false);
+            document.getElementById('btnWifiConnect').innerText = "Kết nối IP";
+            document.getElementById('btnWifiConnect').className = "px-5 py-2.5 rounded-xl bg-cyberNeon hover:bg-emerald-400 text-slate-950 font-black text-xs uppercase tracking-wider transition shadow-lg glow-green flex items-center gap-2";
+            logSystem("Đã dừng WiFi Polling.");
+        }
+
+        function disconnectAll() {
+            if (state.mode === 'ble') disconnectBLE();
+            else disconnectWiFi();
+        }
+
+        /* COMMAND TRANSMISSION */
+        async function sendCommand(cmdStr) {
+            logSystem(`[TX Command] ${cmdStr}`);
+            
+            if (state.mode === 'ble' && state.bleCharacteristic) {
+                try {
+                    const encoder = new TextEncoder();
+                    await state.bleCharacteristic.writeValue(encoder.encode(cmdStr));
+                } catch (e) {
+                    logSystem(`[LỖI TX BLE] ${e.message}`);
+                }
+            } else if (state.mode === 'wifi' && state.connected) {
+                const ip = document.getElementById('wifiIpInput').value.trim();
+                try {
+                    await fetch(`http://${ip}/api/control?cmd=${encodeURIComponent(cmdStr)}`);
+                } catch (e) {
+                    logSystem(`[LỖI TX HTTP] ${e.message}`);
+                }
+            } else {
+                logSystem("[MÔ PHỎNG] Chưa kết nối thiết bị. Đã ghi nhận lệnh.");
+            }
+        }
+
+        /* ACTUATOR HANDLERS */
+        function toggleRelay(index) {
+            state.relays[index - 1] = !state.relays[index - 1];
+            const isOn = state.relays[index - 1];
+            const btn = document.getElementById(`btnRelay${index}`);
+            const icon = document.getElementById(`iconRelay${index}`);
+            const status = document.getElementById(`statusRelay${index}`);
+
+            if (isOn) {
+                btn.className = "p-3 rounded-xl bg-cyberCyan/10 border border-cyberCyan flex flex-col items-center justify-center gap-2 transition duration-200 glow-cyan";
+                icon.className = "fa-solid fa-power-off text-xl text-cyberCyan";
+                status.innerText = "ON";
+                status.className = "text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyberCyan text-slate-950 font-bold";
+            } else {
+                btn.className = "p-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 flex flex-col items-center justify-center gap-2 transition duration-200";
+                icon.className = "fa-solid fa-power-off text-xl text-slate-600";
+                status.innerText = "OFF";
+                status.className = "text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-950 text-slate-500";
+            }
+
+            sendCommand(`RELAY${index}:${isOn ? 'ON' : 'OFF'}`);
+        }
+
+        function sendPWM(val) {
+            state.pwmValue = val;
+            sendCommand(`PWM:${val}`);
+        }
+
+        function sendPulse(stateVal) {
+            sendCommand(`PULSE:${stateVal}`);
+        }
+
+        function sendRGB(hexColor) {
+            document.getElementById('rgbHex').innerText = hexColor.toUpperCase();
+            sendCommand(`RGB:${hexColor}`);
+        }
+
+        /* DATA PARSING & UI UPDATE */
+        function parseTelemetryData(rawStr) {
+            try {
+                const data = JSON.parse(rawStr);
+                updateDashboardMetrics(data);
+            } catch (e) {
+                logSystem(`[RAW RX] ${rawStr}`);
+            }
+        }
+
+        function updateDashboardMetrics(data) {
+            const timeLabel = new Date().toLocaleTimeString();
+
+            if (data.temp !== undefined) {
+                document.getElementById('valTemp').innerText = data.temp;
+                document.getElementById('barTemp').style.width = Math.min(100, (data.temp / 80) * 100) + '%';
+            }
+            if (data.hum !== undefined) {
+                document.getElementById('valHum').innerText = data.hum;
+                document.getElementById('barHum').style.width = Math.min(100, data.hum) + '%';
+            }
+            if (data.volt !== undefined) {
+                document.getElementById('valVolt').innerText = data.volt;
+                document.getElementById('barVolt').style.width = Math.min(100, (data.volt / 5.0) * 100) + '%';
+            }
+            if (data.rssi !== undefined) {
+                document.getElementById('valRssi').innerText = data.rssi;
+                document.getElementById('barRssi').style.width = Math.min(100, Math.max(0, 100 + data.rssi)) + '%';
+            }
+
+            // Chart Update
+            if (state.chart) {
+                state.chart.data.labels.push(timeLabel);
+                state.chart.data.datasets[0].data.push(data.temp || 0);
+                state.chart.data.datasets[1].data.push(data.hum || 0);
+
+                if (state.chart.data.labels.length > 15) {
+                    state.chart.data.labels.shift();
+                    state.chart.data.datasets[0].data.shift();
+                    state.chart.data.datasets[1].data.shift();
+                }
+                state.chart.update();
+            }
+        }
+
+        /* UTILITY FUNCTIONS */
+        function setConnectionState(isConnected, text) {
+            state.connected = isConnected;
+            const statusLed = document.getElementById('statusLed');
+            const statusText = document.getElementById('statusText');
+
+            if (isConnected) {
+                statusLed.className = "w-2.5 h-2.5 rounded-full bg-cyberNeon glow-green animate-pulse";
+                statusText.innerText = text || "ONLINE";
+                statusText.className = "font-mono text-cyberNeon font-bold";
+            } else {
+                statusLed.className = "w-2.5 h-2.5 rounded-full bg-red-500";
+                statusText.innerText = "OFFLINE";
+                statusText.className = "font-mono text-slate-500";
+            }
+        }
+
+        function logSystem(msg) {
+            const terminal = document.getElementById('terminalLog');
+            const time = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.innerHTML = `<span class="text-slate-600">[${time}]</span> ${msg}`;
+            terminal.appendChild(logEntry);
+            terminal.scrollTop = terminal.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('terminalLog').innerHTML = '';
+            logSystem("Đã làm sạch log console.");
+        }
+
+        function exportLog() {
+            const text = document.getElementById('terminalLog').innerText;
+            const blob = new Blob([text], { type: 'text/plain' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `ESP32_Log_${Date.now()}.txt`;
+            a.click();
+        }
+
+        function toggleModal(modalId) {
+            document.getElementById(modalId).classList.toggle('hidden');
+        }
+
+        function switchCodeTab(tab) {
+            const bleBtn = document.getElementById('tabBleCodeBtn');
+            const wifiBtn = document.getElementById('tabWifiCodeBtn');
+            const bleSnippet = document.getElementById('codeSnippetBle');
+            const wifiSnippet = document.getElementById('codeSnippetWifi');
+
+            if (tab === 'ble') {
+                bleBtn.className = "px-5 py-3 font-bold text-cyberCyan border-b-2 border-cyberCyan";
+                wifiBtn.className = "px-5 py-3 font-bold text-slate-500 border-b-2 border-transparent";
+                bleSnippet.classList.remove('hidden');
+                wifiSnippet.classList.add('hidden');
+            } else {
+                wifiBtn.className = "px-5 py-3 font-bold text-cyberNeon border-b-2 border-cyberNeon";
+                bleBtn.className = "px-5 py-3 font-bold text-slate-500 border-b-2 border-transparent";
+                wifiSnippet.classList.remove('hidden');
+                bleSnippet.classList.add('hidden');
+            }
+        }
+
+        function copyCode() {
+            const isBleVisible = !document.getElementById('codeSnippetBle').classList.contains('hidden');
+            const codeText = isBleVisible 
+                ? document.getElementById('codeSnippetBle').innerText 
+                : document.getElementById('codeSnippetWifi').innerText;
+
+            const textarea = document.createElement('textarea');
+            textarea.value = codeText;
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+
+            alert("Đã copy mã nguồn C++ vào khay nhớ tạm!");
+        }
+
+        function initChart() {
+            const ctx = document.getElementById('telemetryChart').getContext('2d');
+            state.chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        {
+                            label: 'Nhiệt độ (°C)',
+                            borderColor: '#ef4444',
+                            backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                            fill: true,
+                            tension: 0.4,
+                            data: []
+                        },
+                        {
+                            label: 'Độ ẩm (%)',
+                            borderColor: '#06b6d4',
+                            backgroundColor: 'rgba(6, 182, 212, 0.1)',
+                            fill: true,
+                            tension: 0.4,
+                            data: []
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { labels: { color: '#94a3b8', font: { family: 'monospace' } } }
+                    },
+                    scales: {
+                        x: {
+                            grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                            ticks: { color: '#64748b', font: { family: 'monospace' } }
+                        },
+                        y: {
+                            grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                            ticks: { color: '#64748b', font: { family: 'monospace' } }
+                        }
+                    }
+                }
+            });
+        }
+
+        function clearChart() {
+            if (state.chart) {
+                state.chart.data.labels = [];
+                state.chart.data.datasets.forEach(d => d.data = []);
+                state.chart.update();
+            }
+        }
+    </script>
+</body>
+</html>
