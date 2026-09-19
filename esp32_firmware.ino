@@ -1,49 +1,55 @@
 /*
  * ==============================================================================
- * ESP32 NEXUS CORE - FIRMWARE HTTP REST & mDNS TELEMETRY SERVER
+ * ESP32 NEXUS CORE - DUAL FIRMWARE (BLE BLUETOOTH + HTTP REST & mDNS)
  * ==============================================================================
  * Dự án: ESP32 PWA Dashboard
  * Chức năng:
- *  - Kết nối WiFi gia đình (STA mode)
- *  - Đăng ký tên miền mDNS: http://esp32-nexus.local
- *  - Endpoint /api/data: Cung cấp dữ liệu JSON cảm biến mỗi 1 giây (CORS enabled)
- *  - Endpoint /api/control: Nhận lệnh điều khiển Rơ-le, PWM từ PWA Dashboard
- *  - Tương thích 100% với PWA Hosted trên GitHub Pages
+ *  - Bluetooth Low Energy (BLE GATT Server): Dịch vụ truyền nhận Telemetry & Điều khiển
+ *    Tên thiết bị BLE: "ESP32_NEXUS"
+ *    Service UUID:        4fa0c101-0001-4000-8000-000000000000
+ *    Characteristic UUID: 4fa0c101-0002-4000-8000-000000000000
+ *  - WiFi Dual Mode (AP riêng 192.168.4.1 + STA kết nối Router)
+ *  - mDNS: http://esp32-nexus.local
+ *  - Tương thích 100% với Web Bluetooth API & PWA GitHub Pages
  * ==============================================================================
  */
 
 #include <WiFi.h>
 #include <WebServer.h>
 #include <ESPmDNS.h>
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
+
+// ================== CẤU HÌNH BLE UUID ==================
+#define BLE_SERVICE_UUID        "4fa0c101-0001-4000-8000-000000000000"
+#define BLE_CHARACTERISTIC_UUID "4fa0c101-0002-4000-8000-000000000000"
+
+BLECharacteristic *pBleChar = nullptr;
+bool bleConnected = false;
+bool oldBleConnected = false;
 
 // ================== CẤU HÌNH THÔNG TIN WIFI ==================
-const char* WIFI_SSID     = "1/11 Tret";      // Thay bằng tên WiFi nhà bạn
-const char* WIFI_PASSWORD = "88889999@";  // Thay bằng mật khẩu WiFi
-
-// Tên miền mDNS (sẽ truy cập qua http://esp32-nexus.local)
+const char* WIFI_SSID     = "1/11 Tret";      
+const char* WIFI_PASSWORD = "88889999@";  
 const char* MDNS_HOST     = "esp32-nexus";
 
-// Khởi tạo WebServer tại cổng tiêu chuẩn 80
 WebServer server(80);
 
 // ================== BIẾN TRẠNG THÁI HỆ THỐNG ==================
 unsigned long lastSensorUpdate = 0;
 const unsigned long SENSOR_INTERVAL = 1000; // Cập nhật dữ liệu mỗi 1 giây (1000ms)
 
-// Các thông số Telemetry giả lập
 float sensorTemp   = 28.5; // °C
 float sensorHum    = 65.0; // % RH
 float sensorVolt   = 4.15; // Volts
 int   sensorRssi   = -55;  // dBm
 
-// Trạng thái 4 Rơ-le (Relay 1..4)
 bool relayStates[4] = {false, false, false, false};
-
-// Chân GPIO Rơ-le vật lý (nếu có kết nối phần cứng thật)
 const int RELAY_PINS[4] = {25, 26, 27, 14};
 
 // ================== HÀM HỖ TRỢ CORS ==================
-// Đảm bảo trình duyệt từ GitHub Pages không bị chặn do Cross-Origin
 void applyCorsHeaders() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -52,15 +58,16 @@ void applyCorsHeaders() {
 
 // ================== HÀM CẬP NHẬT DỮ LIỆU TELEMETRY ==================
 void updateTelemetryValues() {
-  // Sinh giá trị ngẫu nhiên dao động thực tế mỗi 1 giây
-  sensorTemp = 28.0 + (random(0, 80) / 10.0);   // Dao động từ 28.0 - 36.0 °C
-  sensorHum  = 55.0 + (random(0, 300) / 10.0);  // Dao động từ 55.0 - 85.0 %
-  sensorVolt = 3.80 + (random(0, 40) / 100.0);  // Dao động từ 3.80 - 4.20 V
+  sensorTemp = 28.0 + (random(0, 80) / 10.0);   
+  sensorHum  = 55.0 + (random(0, 300) / 10.0);  
+  sensorVolt = 3.80 + (random(0, 40) / 100.0);  
   
   if (WiFi.status() == WL_CONNECTED) {
     sensorRssi = WiFi.RSSI();
+  } else if (bleConnected) {
+    sensorRssi = -50 + random(-10, 5); // Ước lượng RSSI BLE
   } else {
-    sensorRssi = -55 + random(-10, 10);
+    sensorRssi = -60;
   }
 }
 
@@ -81,45 +88,70 @@ String generateTelemetryJson() {
   return json;
 }
 
-// ================== CÁC ENDPOINT REST API ==================
+// ================== XỬ LÝ LỆNH ĐIỀU KHIỂN CHUNG (BLE & HTTP) ==================
+void handleCommandString(String cmd) {
+  cmd.trim();
+  Serial.println("[CMD Nhận được]: " + cmd);
 
-// GET /api/data: Cung cấp JSON dữ liệu cảm biến
+  for (int i = 1; i <= 4; i++) {
+    String onCmd  = "RELAY" + String(i) + ":ON";
+    String offCmd = "RELAY" + String(i) + ":OFF";
+    
+    if (cmd == onCmd) {
+      relayStates[i - 1] = true;
+      digitalWrite(RELAY_PINS[i - 1], HIGH);
+      Serial.printf("-> Rơ-le %d: BẬT\n", i);
+    } else if (cmd == offCmd) {
+      relayStates[i - 1] = false;
+      digitalWrite(RELAY_PINS[i - 1], LOW);
+      Serial.printf("-> Rơ-le %d: TẮT\n", i);
+    }
+  }
+
+  if (cmd.startsWith("PWM:")) {
+    int pwmVal = cmd.substring(4).toInt();
+    Serial.printf("-> PWM: %d\n", pwmVal);
+  }
+}
+
+// ================== CALLBACKS CHO BLUETOOTH BLE ==================
+class BleServerCallbacks: public BLEServerCallbacks {
+  void onConnect(BLEServer* pServer) {
+    bleConnected = true;
+    Serial.println("\n[BLE] >>> Thiết bị Web PWA đã kết nối Bluetooth! <<<");
+  }
+
+  void onDisconnect(BLEServer* pServer) {
+    bleConnected = false;
+    Serial.println("\n[BLE] >>> Thiết bị Web PWA đã ngắt kết nối. <<<");
+  }
+};
+
+class BleCharCallbacks: public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *pCharacteristic) {
+    String rxValue = pCharacteristic->getValue();
+    if (rxValue.length() > 0) {
+      handleCommandString(rxValue);
+    }
+  }
+};
+
+// ================== CÁC ENDPOINT REST API HTTP ==================
 void handleApiData() {
   applyCorsHeaders();
   server.send(200, "application/json", generateTelemetryJson());
 }
 
-// OPTIONS /api/data & /api/control: Xử lý Preflight CORS request
 void handleOptions() {
   applyCorsHeaders();
-  server.send(204); // No Content
+  server.send(204);
 }
 
-// GET hoặc POST /api/control?cmd=...: Điều khiển Rơ-le và thiết bị
 void handleApiControl() {
   applyCorsHeaders();
-  
   if (server.hasArg("cmd")) {
-    String cmd = server.arg("cmd");
-    Serial.println("[HTTP CMD Nhận được]: " + cmd);
-
-    // Xử lý lệnh Rơ-le (VD: RELAY1:ON, RELAY2:OFF)
-    for (int i = 1; i <= 4; i++) {
-      String onCmd  = "RELAY" + String(i) + ":ON";
-      String offCmd = "RELAY" + String(i) + ":OFF";
-      
-      if (cmd == onCmd) {
-        relayStates[i - 1] = true;
-        digitalWrite(RELAY_PINS[i - 1], HIGH);
-        Serial.printf("-> Rơ-le %d: BẬT\n", i);
-      } else if (cmd == offCmd) {
-        relayStates[i - 1] = false;
-        digitalWrite(RELAY_PINS[i - 1], LOW);
-        Serial.printf("-> Rơ-le %d: TẮT\n", i);
-      }
-    }
+    handleCommandString(server.arg("cmd"));
   }
-
   String response = "{\"status\":\"ok\",\"relays\":[" + 
                     String(relayStates[0] ? "true" : "false") + "," +
                     String(relayStates[1] ? "true" : "false") + "," +
@@ -128,19 +160,19 @@ void handleApiControl() {
   server.send(200, "application/json", response);
 }
 
-// Trang chủ HTTP /
 void handleRoot() {
   applyCorsHeaders();
   String html = "<!DOCTYPE html><html><head><meta charset='utf-8'><title>ESP32 Nexus Core</title></head>";
   html += "<body style='background:#0f172a;color:#38bdf8;font-family:sans-serif;text-align:center;padding:50px;'>";
-  html += "<h1>ESP32 NEXUS CORE ONLINE</h1>";
+  html += "<h1>ESP32 NEXUS CORE (BLE + WIFI)</h1>";
+  html += "<p>Bluetooth BLE: <b>ESP32_NEXUS</b> (Sẵn sàng kết nối)</p>";
   html += "<p>Tên miền mDNS: <a href='http://" + String(MDNS_HOST) + ".local/api/data' style='color:#4ade80;'>http://" + String(MDNS_HOST) + ".local/api/data</a></p>";
   html += "<p>IP nội mạng: " + WiFi.localIP().toString() + "</p>";
+  html += "<p>IP Access Point: " + WiFi.softAPIP().toString() + "</p>";
   html += "</body></html>";
   server.send(200, "text/html", html);
 }
 
-// Xử lý 404 Not Found kèm CORS
 void handleNotFound() {
   if (server.method() == HTTP_OPTIONS) {
     handleOptions();
@@ -155,83 +187,109 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
   Serial.println("\n\n========================================");
-  Serial.println("   ESP32 NEXUS CORE - KHỞI ĐỘNG HỆ THỐNG   ");
+  Serial.println("  ESP32 NEXUS CORE - DUAL BLE & WIFI   ");
   Serial.println("========================================");
 
-  // Cấu hình chân Rơ-le
+  // 1. Cấu hình chân Rơ-le
   for (int i = 0; i < 4; i++) {
     pinMode(RELAY_PINS[i], OUTPUT);
     digitalWrite(RELAY_PINS[i], LOW);
   }
 
-  // Cấu hình chế độ WiFi kép: Luôn phát WiFi riêng ESP32_NEXUS (IP: 192.168.4.1)
-  // và đồng thời kết nối vào WiFi nhà
+  // 2. KHỞI TẠO BLUETOOTH LOW ENERGY (BLE)
+  Serial.println("[BLE] Đang khởi tạo Bluetooth BLE Server...");
+  BLEDevice::init("ESP32_NEXUS");
+  BLEServer *pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new BleServerCallbacks());
+
+  BLEService *pService = pServer->createService(BLE_SERVICE_UUID);
+  pBleChar = pService->createCharacteristic(
+                BLE_CHARACTERISTIC_UUID,
+                BLECharacteristic::PROPERTY_READ   |
+                BLECharacteristic::PROPERTY_WRITE  |
+                BLECharacteristic::PROPERTY_NOTIFY
+              );
+  pBleChar->addDescriptor(new BLE2902());
+  pBleChar->setCallbacks(new BleCharCallbacks());
+  pService->start();
+
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(BLE_SERVICE_UUID);
+  pAdvertising->setScanResponse(true);
+  pAdvertising->setMinPreferred(0x06);
+  pAdvertising->setMinPreferred(0x12);
+  BLEDevice::startAdvertising();
+  Serial.println("[BLE] >>> ESP32_NEXUS đã phát quảng bá Bluetooth thành công! <<<");
+
+  // 3. KHỞI TẠO WIFI DUAL MODE (AP + STA)
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAP("ESP32_NEXUS", "12345678");
-  Serial.println("\n[WiFi AP] Đang phát mạng: ESP32_NEXUS | Pass: 12345678");
-  Serial.print("[WiFi AP] Địa chỉ IP kết nối trực tiếp: http://");
-  Serial.println(WiFi.softAPIP());
+  Serial.println("[WiFi AP] Đang phát mạng: ESP32_NEXUS (IP: 192.168.4.1)");
 
-  // Kết nối WiFi gia đình (STA Mode)
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.print("Đang kết nối vào WiFi nhà: ");
   Serial.println(WIFI_SSID);
 
   int retryCount = 0;
-  while (WiFi.status() != WL_CONNECTED && retryCount < 20) {
-    delay(500);
+  while (WiFi.status() != WL_CONNECTED && retryCount < 10) {
+    delay(400);
     Serial.print(".");
     retryCount++;
   }
 
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\n[WiFi STA] Đã kết nối thành công!");
-    Serial.print("[WiFi STA] Địa chỉ IP nội mạng: ");
+    Serial.println("\n[WiFi STA] Đã kết nối WiFi!");
+    Serial.print("[WiFi STA] IP: ");
     Serial.println(WiFi.localIP());
   } else {
-    Serial.println("\n[WiFi STA] Chưa kết nối được WiFi nhà. Thiết bị vẫn chạy tốt qua mạng riêng ESP32_NEXUS (192.168.4.1)");
+    Serial.println("\n[WiFi STA] Tiếp tục với mạng riêng và BLE.");
   }
 
-  // Đăng ký tên miền mDNS (esp32-nexus.local)
+  // 4. KHỞI TẠO mDNS & WEBSERVER
   if (MDNS.begin(MDNS_HOST)) {
-    Serial.print("[mDNS] Đã đăng ký thành công! Truy cập PWA qua: http://");
-    Serial.print(MDNS_HOST);
-    Serial.println(".local");
-    // Thêm dịch vụ HTTP vào mDNS
     MDNS.addService("http", "tcp", 80);
-  } else {
-    Serial.println("[mDNS LỖI] Không thể khởi động mDNS responder!");
+    Serial.println("[mDNS] Sẵn sàng: http://esp32-nexus.local");
   }
 
-  // Đăng ký các Route API cho WebServer
   server.on("/", HTTP_GET, handleRoot);
-  
-  // Endpoint /api/data
   server.on("/api/data", HTTP_GET, handleApiData);
   server.on("/api/data", HTTP_OPTIONS, handleOptions);
-  
-  // Endpoint /api/control
   server.on("/api/control", HTTP_GET, handleApiControl);
   server.on("/api/control", HTTP_POST, handleApiControl);
   server.on("/api/control", HTTP_OPTIONS, handleOptions);
-
   server.onNotFound(handleNotFound);
 
-  // Kích hoạt Server
   server.begin();
-  Serial.println("[HTTP Server] Máy chủ đã sẵn sàng nhận kết nối tại cổng 80.");
+  Serial.println("[HTTP Server] Sẵn sàng tại cổng 80.");
 }
 
 // ================== LOOP CHÍNH ==================
 void loop() {
-  // Lắng nghe các HTTP request đến
+  // Lắng nghe HTTP request
   server.handleClient();
 
-  // Cập nhật giá trị cảm biến mỗi 1 giây (1000ms)
+  // Tự động phát quảng bá lại nếu ngắt kết nối BLE
+  if (!bleConnected && oldBleConnected) {
+    delay(500); 
+    BLEDevice::startAdvertising();
+    Serial.println("[BLE] Đã bật lại phát quảng bá (Advertising) chờ kết nối lại...");
+    oldBleConnected = bleConnected;
+  }
+  if (bleConnected && !oldBleConnected) {
+    oldBleConnected = bleConnected;
+  }
+
+  // Cập nhật và gửi Telemetry mỗi 1 giây
   unsigned long currentMillis = millis();
   if (currentMillis - lastSensorUpdate >= SENSOR_INTERVAL) {
     lastSensorUpdate = currentMillis;
     updateTelemetryValues();
+
+    // Nếu có thiết bị Web PWA đang kết nối BLE -> Bắn dữ liệu Notify thời gian thực
+    if (bleConnected && pBleChar != nullptr) {
+      String jsonStr = generateTelemetryJson();
+      pBleChar->setValue(jsonStr.c_str());
+      pBleChar->notify();
+    }
   }
 }
-

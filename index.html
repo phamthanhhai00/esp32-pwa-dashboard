@@ -139,7 +139,15 @@
                         <p class="text-xs text-slate-400 font-mono">Kết nối trực tiếp không cần mạng Internet/WiFi qua trình duyệt Chrome</p>
                     </div>
                 </div>
-                <div class="flex items-center gap-2 w-full sm:w-auto">
+                <div class="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+                    <!-- Auto-Reconnect Toggle -->
+                    <label class="flex items-center gap-2 cursor-pointer text-xs text-slate-300 select-none bg-slate-900/80 px-3 py-2 rounded-xl border border-slate-800 hover:border-cyberCyan/30 transition">
+                        <input type="checkbox" id="chkBleAutoReconnect" checked onchange="toggleBleAutoReconnect(this.checked)" class="accent-cyberCyan rounded w-4 h-4 cursor-pointer">
+                        <span class="flex items-center gap-1.5 font-semibold text-[11px] uppercase tracking-wider text-slate-300">
+                            <i class="fa-solid fa-arrows-rotate text-cyberCyan text-xs"></i> Tự nhớ & Auto Scan
+                        </span>
+                    </label>
+
                     <button id="btnBleConnect" onclick="connectBLE()" class="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-gradient-to-r from-cyberCyan to-blue-600 text-slate-950 font-black text-xs uppercase tracking-wider hover:opacity-90 transition shadow-lg glow-cyan flex items-center justify-center gap-2">
                         <i class="fa-solid fa-satellite-dish"></i> Quét & Kết nối BLE
                     </button>
@@ -535,6 +543,9 @@ void loop() {
             bleDevice: null,
             bleGattServer: null,
             bleCharacteristic: null,
+            bleAutoReconnect: true,
+            bleReconnectTimer: null,
+            isReconnectingBle: false,
             wifiHost: 'esp32-nexus.local',
             wifiPollTimer: null,
             wifiFailCount: 0,
@@ -550,6 +561,12 @@ void loop() {
         window.addEventListener('DOMContentLoaded', () => {
             initChart();
             setupPWAAndServiceWorker();
+            // Tự động kiểm tra thiết bị BLE đã ghép đôi trước đó để kết nối ngầm
+            setTimeout(() => {
+                if (state.mode === 'ble') {
+                    tryAutoConnectRememberedBLE();
+                }
+            }, 1000);
         });
 
         // Register Service Worker, Auto-update Cache & Check PWA Mode
@@ -629,7 +646,52 @@ void loop() {
             }
         }
 
-        /* WEB BLUETOOTH API LOGIC */
+        /* ================== WEB BLUETOOTH LOW ENERGY (BLE) ENGINE ================== */
+        function toggleBleAutoReconnect(enabled) {
+            state.bleAutoReconnect = enabled;
+            logSystem(`[BLE] Chế độ tự động nhớ & Auto-Scan: ${enabled ? 'BẬT' : 'TẮT'}`);
+            if (!enabled && state.bleReconnectTimer) {
+                clearTimeout(state.bleReconnectTimer);
+                state.bleReconnectTimer = null;
+                state.isReconnectingBle = false;
+            } else if (enabled && !state.connected && (state.bleDevice || navigator.bluetooth?.getDevices)) {
+                startBleAutoReconnect();
+            }
+        }
+
+        async function doGattConnect(device) {
+            logSystem(`[BLE] Đang bắt tay GATT với: "${device.name || 'ESP32_NEXUS'}"...`);
+            
+            // Xóa listener cũ tránh trùng lặp
+            device.removeEventListener('gattserverdisconnected', onGattDisconnected);
+            device.addEventListener('gattserverdisconnected', onGattDisconnected);
+
+            state.bleDevice = device;
+            state.bleGattServer = await device.gatt.connect();
+            
+            const service = await state.bleGattServer.getPrimaryService(BLE_SERVICE_UUID);
+            state.bleCharacteristic = await service.getCharacteristic(BLE_CHAR_UUID);
+
+            // Bật Notify để nhận dữ liệu Telemetry thời gian thực
+            await state.bleCharacteristic.startNotifications();
+            state.bleCharacteristic.removeEventListener('characteristicvaluechanged', handleBleNotification);
+            state.bleCharacteristic.addEventListener('characteristicvaluechanged', handleBleNotification);
+
+            setConnectionState(true, `BLE: ${device.name || 'ESP32_NEXUS'}`);
+            document.getElementById('btnBleConnect').classList.add('hidden');
+            document.getElementById('btnBleDisconnect').classList.remove('hidden');
+            logSystem(`[BLE THÀNH CÔNG] Đã kết nối với ${device.name || 'ESP32_NEXUS'}! Dữ liệu cảm biến đang chạy.`);
+            
+            // Dừng vòng lặp reconnect nếu đang chạy
+            if (state.bleReconnectTimer) {
+                clearTimeout(state.bleReconnectTimer);
+                state.bleReconnectTimer = null;
+            }
+            state.isReconnectingBle = false;
+            return true;
+        }
+
+        /* THỦ CÔNG LẦN ĐẦU: Yêu cầu quyền duyệt thiết bị */
         async function connectBLE() {
             if (!navigator.bluetooth) {
                 alert("Trình duyệt không hỗ trợ Web Bluetooth. Vui lòng dùng Chrome trên Android/Windows/Mac.");
@@ -638,26 +700,16 @@ void loop() {
 
             try {
                 logSystem("Bắt đầu quét tìm thiết bị BLE...");
-                state.bleDevice = await navigator.bluetooth.requestDevice({
+                const device = await navigator.bluetooth.requestDevice({
                     acceptAllDevices: true,
                     optionalServices: [BLE_SERVICE_UUID]
                 });
 
-                logSystem(`Đã chọn: ${state.bleDevice.name || 'ESP32 Device'}. Đang kết nối GATT...`);
-                state.bleDevice.addEventListener('gattserverdisconnected', onGattDisconnected);
+                state.bleAutoReconnect = true;
+                const chk = document.getElementById('chkBleAutoReconnect');
+                if (chk) chk.checked = true;
 
-                state.bleGattServer = await state.bleDevice.gatt.connect();
-                const service = await state.bleGattServer.getPrimaryService(BLE_SERVICE_UUID);
-                state.bleCharacteristic = await service.getCharacteristic(BLE_CHAR_UUID);
-
-                // Enable Notify Listener
-                await state.bleCharacteristic.startNotifications();
-                state.bleCharacteristic.addEventListener('characteristicvaluechanged', handleBleNotification);
-
-                setConnectionState(true, `BLE: ${state.bleDevice.name || 'ESP32'}`);
-                document.getElementById('btnBleConnect').classList.add('hidden');
-                document.getElementById('btnBleDisconnect').classList.remove('hidden');
-                logSystem("Kết nối BLE thành công!");
+                await doGattConnect(device);
 
             } catch (error) {
                 logSystem(`[LỖI BLE] ${error.message}`);
@@ -665,14 +717,80 @@ void loop() {
             }
         }
 
+        /* TỰ ĐỘNG NHỚ & KẾT NỐI LẠI (KHÔNG CẦN BẤM NÚT) */
+        async function tryAutoConnectRememberedBLE() {
+            if (!navigator.bluetooth || !navigator.bluetooth.getDevices) {
+                return false;
+            }
+
+            try {
+                const devices = await navigator.bluetooth.getDevices();
+                if (devices && devices.length > 0) {
+                    const target = devices.find(d => (d.name && (d.name.includes('ESP32') || d.name.includes('NEXUS')))) || devices[0];
+                    if (target) {
+                        logSystem(`[BLE AUTO] Phát hiện thiết bị đã ghép đôi: "${target.name || 'ESP32'}". Đang tự động kết nối ngầm...`);
+                        await doGattConnect(target);
+                        return true;
+                    }
+                }
+            } catch (e) {
+                console.warn('[BLE AUTO] Lỗi kiểm tra thiết bị đã nhớ:', e);
+            }
+            return false;
+        }
+
+        /* VÒNG LẶP AUTO-SCAN / AUTO-RECONNECT KHI MẤT SÓNG HOẶC TẮT NGUỒN */
+        function startBleAutoReconnect() {
+            if (!state.bleAutoReconnect || state.connected || state.isReconnectingBle) return;
+            state.isReconnectingBle = true;
+
+            const attemptReconnect = async () => {
+                if (!state.bleAutoReconnect || state.connected) {
+                    state.isReconnectingBle = false;
+                    return;
+                }
+
+                logSystem("[BLE AUTO SCAN] Đang quét sóng tìm lại thiết bị ESP32...");
+                
+                try {
+                    let targetDevice = state.bleDevice;
+                    if (!targetDevice && navigator.bluetooth && navigator.bluetooth.getDevices) {
+                        const devices = await navigator.bluetooth.getDevices();
+                        targetDevice = devices.find(d => (d.name && (d.name.includes('ESP32') || d.name.includes('NEXUS')))) || devices[0];
+                    }
+
+                    if (targetDevice) {
+                        await doGattConnect(targetDevice);
+                        return; // Đã kết nối lại thành công!
+                    }
+                } catch (err) {
+                    // Chưa tìm thấy sóng hoặc ESP32 chưa bật -> Chờ lượt sau
+                }
+
+                // Tiếp tục thử lại sau 2.5 giây
+                state.bleReconnectTimer = setTimeout(attemptReconnect, 2500);
+            };
+
+            state.bleReconnectTimer = setTimeout(attemptReconnect, 1500);
+        }
+
         function handleBleNotification(event) {
             const decoder = new TextDecoder('utf-8');
             const rawValue = decoder.decode(event.target.value);
-            logSystem(`[BLE RX] ${rawValue}`);
             parseTelemetryData(rawValue);
         }
 
         function disconnectBLE() {
+            state.bleAutoReconnect = false; // Người dùng chủ động bấm ngắt -> Tắt tạm thời auto reconnect
+            const chk = document.getElementById('chkBleAutoReconnect');
+            if (chk) chk.checked = false;
+
+            if (state.bleReconnectTimer) {
+                clearTimeout(state.bleReconnectTimer);
+                state.bleReconnectTimer = null;
+            }
+            state.isReconnectingBle = false;
+
             if (state.bleDevice && state.bleDevice.gatt.connected) {
                 state.bleDevice.gatt.disconnect();
             }
@@ -680,10 +798,15 @@ void loop() {
         }
 
         function onGattDisconnected() {
-            logSystem("Đã ngắt kết nối Bluetooth.");
+            logSystem("[BLE] Đã ngắt kết nối Bluetooth. 4 thông số đo tự động về 0.");
             setConnectionState(false);
             document.getElementById('btnBleConnect').classList.remove('hidden');
             document.getElementById('btnBleDisconnect').classList.add('hidden');
+
+            // Nếu người dùng bật Auto Reconnect, tự động bắt đầu quét lại ngầm
+            if (state.mode === 'ble' && state.bleAutoReconnect) {
+                startBleAutoReconnect();
+            }
         }
 
         /* WIFI mDNS SCAN & POLLING LOGIC */
