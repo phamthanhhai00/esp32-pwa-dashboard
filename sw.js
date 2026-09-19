@@ -1,10 +1,10 @@
 // =====================================================================
 // SERVICE WORKER - AUTO-UPDATE & OFFLINE CACHE
 // ESP32 NEXUS CORE PWA
-// Version: esp32-nexus-core-v5
+// Version: esp32-nexus-core-v6
 // =====================================================================
 
-const CACHE_NAME = 'esp32-nexus-core-v5';
+const CACHE_NAME = 'esp32-nexus-core-v6';
 
 const ASSETS_TO_CACHE = [
   './',

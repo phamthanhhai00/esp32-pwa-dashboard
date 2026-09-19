@@ -714,9 +714,11 @@ void loop() {
             }
 
             try {
-                logSystem("Bắt đầu quét tìm thiết bị BLE...");
+                logSystem("Bắt đầu quét tìm thiết bị ESP32 BLE...");
                 const device = await navigator.bluetooth.requestDevice({
-                    acceptAllDevices: true,
+                    filters: [
+                        { namePrefix: 'ESP32' }
+                    ],
                     optionalServices: [BLE_SERVICE_UUID]
                 });
 
